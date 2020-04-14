@@ -15,7 +15,8 @@ Press Ctrl-C on the command line or send a signal to the process to stop the
 bot.
 """
 
-from tokenn import TOKEN
+import os
+TOKEN = os.environ["TOKEN"]
 
 from requests import session
 import json
