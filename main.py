@@ -1,22 +1,5 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# This program is dedicated to the public domain under the CC0 license.
-
-"""
-Simple Bot to reply to Telegram messages.
-
-First, a few handler functions are defined. Then, those functions are passed to
-the Dispatcher and registered at their respective places.
-Then, the bot is started and runs until we press Ctrl-C on the command line.
-
-Usage:
-Basic Echobot example, repeats messages.
-Press Ctrl-C on the command line or send a signal to the process to stop the
-bot.
-"""
-
 import os
-TOKEN = os.environ["TOKEN"]
+TOKEN = os.environ.get("TOKEN", open("token.txt", "r").readline().strip())
 
 from requests import session
 import json
@@ -27,7 +10,6 @@ from time import time
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 import telegram
 
-# Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     level=logging.INFO)
 
@@ -75,7 +57,6 @@ def print_submissions(submissions, prev=[], short=False):
         fmt = "|{: ^3}|{: ^10}|{: ^3}|{: ^5}|"
     result  = (fmt + "\n").format(*headings)
     result += (fmt.replace(' ', '-') + "\n").format("", "", "", "")
-    # result += "|" + "-" * 3 + "|" + "-" * 12 + "|" + "-" * 10 + "|" + "-" * 7 + "|\n"
     for i, submission in enumerate(submissions):
         if short:
             if submission[2] == "TESTING":
@@ -89,15 +70,11 @@ def print_submissions(submissions, prev=[], short=False):
             result += '\n'
     return '```\n' + result.replace('|', '\\|').replace('-', '\\-').replace('*', '\\*').replace('_', '\\_') + '```'
 
-# Define a few command handlers. These usually take the two arguments update and
-# context. Error handlers also receive the raised TelegramError object in error.
 def start(update, context):
-    """Send a message when the command /start is issued."""
     update.message.reply_text('Hi! Use /help to see help')
 
 
 def help(update, context):
-    """Send a message when the command /help is issued."""
     update.message.reply_text(
         '/user User --- set user to follow\n'
         '/contest Context --- set context to follow\n'
@@ -135,7 +112,6 @@ def ask_contest(update, context):
         update.message.reply_text('Current contest: {}'.format(context.chat_data['contest']))
 
 def error(update, context):
-    """Log Errors caused by Updates."""
     logger.warning('Update "%s" caused error "%s"', update, context.error)
 
 
@@ -229,16 +205,10 @@ def hide_practice(update, context):
 
 
 def main():
-    """Start the bot."""
-    # Create the Updater and pass it your bot's token.
-    # Make sure to set use_context=True to use the new context based callbacks
-    # Post version 12 this will no longer be necessary
     updater = Updater(TOKEN, use_context=True)
 
-    # Get the dispatcher to register handlers
     dp = updater.dispatcher
 
-    # on different commands - answer in Telegram
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help))
     dp.add_handler(CommandHandler("user", ask_user, pass_chat_data=True, pass_args=True))
@@ -251,15 +221,10 @@ def main():
     dp.add_handler(CommandHandler("show_practice", show_practice, pass_chat_data=True))
     dp.add_handler(CommandHandler("hide_practice", hide_practice, pass_chat_data=True))
 
-    # log all errors
     dp.add_error_handler(error)
 
-    # Start the Bot
     updater.start_polling()
 
-    # Run the bot until you press Ctrl-C or the process receives SIGINT,
-    # SIGTERM or SIGABRT. This should be used most of the time, since
-    # start_polling() is non-blocking and will stop the bot gracefully.
     updater.idle()
 
 
