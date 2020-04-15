@@ -257,10 +257,21 @@ def get_status(update, context):
     if context.chat_data.get("f5_job") is None:
         update.message.reply_text('Start job with /start_f5')
         return
-    # info = print_submissions(context.chat_data['submissions'],
-    #     context.chat_data["submissions"],
-    #     context.chat_data.get("short_print", False))
-    # context.bot.send_message(update.message.chat_id, text=info, parse_mode=telegram.ParseMode.MARKDOWN_V2)
+    msg = ''
+    for contest in context.bot_data.get("contest", set()):
+        for user in context.chat_data.get("user", set()):
+            cur_submissions = [context.chat_data["data"][contest][user][key] for key in \
+                        sorted(context.chat_data["data"][contest].get(user, dict()).keys())]
+            if len(cur_submissions) > 0:
+                if msg != "":
+                    msg += "\n"
+                msg += "Contest {}, user {}\n".format(contest, user)
+                msg += print_submissions(
+                    cur_submissions,
+                    cur_submissions,
+                    context.chat_data.get("short_print", False))
+    if msg != "":
+        context.bot.send_message(update.message.chat_id, text=msg, parse_mode=telegram.ParseMode.MARKDOWN_V2)
 
 
 def start_f5(update, context):
