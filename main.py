@@ -8,6 +8,7 @@ from requests import session
 import json
 import logging
 import re
+import sys
 from time import time
 
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, PicklePersistence
@@ -61,6 +62,7 @@ def print_submissions(submissions, prev=[], short=False):
     result  = (fmt + "\n").format(*headings)
     result += (fmt.replace(' ', '-') + "\n").format("", "", "", "")
     for i, submission in enumerate(submissions):
+        was_submission = submission[:]
         if short:
             if submission[2] == "TESTING":
                 submission[2] = "..."
@@ -71,6 +73,7 @@ def print_submissions(submissions, prev=[], short=False):
             result += ' *\n'
         else:
             result += '\n'
+        submission = was_submission[:]
     return '```\n' + result.replace('|', '\\|').replace('-', '\\-').replace('*', '\\*').replace('_', '\\_') + '```'
 
 def ask_status(contest, from_=1, count=1000, only_contestant=False):
@@ -91,8 +94,6 @@ def ask_status(contest, from_=1, count=1000, only_contestant=False):
         author = item.get("author").get("members")[0]["handle"].lower()
         verdict = item.get("verdict", "?")
         testset = item.get("testset")
-        if testset == "PRETESTS" and verdict != "OK":
-            continue
 
         if verdict != '?':
             if verdict.count('_') >= 1:
@@ -103,7 +104,7 @@ def ask_status(contest, from_=1, count=1000, only_contestant=False):
         passedTestCount = int(item.get("passedTestCount", 0))
         problemIndex = item.get("problem").get("index", "?")
 
-        submission_id = item.get("id", 0)
+        submission_id = int(item.get("id", 0))
 
         if result.get(author) is None:
             result[author] = []
@@ -166,13 +167,20 @@ def add_contest(update, context):
         update.message.reply_text('This option is not available for you')
         return
 
+    context.bot_data.setdefault('contest', set())
+    context.bot_data.setdefault('contest_mode', dict())
+    context.bot_data.setdefault('contest_from', dict())
+    context.bot_data.setdefault('contest_last_wait', dict())
+
     for contest in context.args:
         if not re.fullmatch(r'[0-9]+', contest):
             update.message.reply_text('Contest must be an integer')
             break
-        if context.bot_data.get('contest') is None:
-            context.bot_data['contest'] = set()
-        context.bot_data['contest'].add(contest)
+        if contest not in context.bot_data['contest']:
+            context.bot_data['contest_mode'][contest] = 0
+            context.bot_data['contest_from'][contest] = 1
+            context.bot_data['contest_last_wait'][contest] = 0
+            context.bot_data['contest'].add(contest)
     ask_contest(update, context)
 
 def del_contest(update, context):
@@ -190,12 +198,25 @@ def del_contest(update, context):
             context.bot_data['last_update'].pop(contest)
         if contest in context.bot_data.get('data', dict()):
             context.bot_data['data'].pop(contest)
+        if contest in context.bot_data.get('contest_mode', dict()):
+            context.bot_data['data'].pop(contest)
+        if contest in context.bot_data.get('contest_from', dict()):
+            context.bot_data['data'].pop(contest)
+        if contest in context.bot_data.get('contest_last_wait', dict()):
+            context.bot_data['data'].pop(contest)
     ask_contest(update, context)
 
 
 def error(update, context):
     logger.warning('Update "%s" caused error "%s"', update, context.error)
-
+    logger.warning('contests: ({}), users: ({})'.format(
+        ', '.join(contest for contest in context.bot_data.get('contest', set())),
+        ', '.join(user for user in context.chat_data.get('user', set()))))
+    for contest in context.bot_data.get('contest', set()):
+        logger.warning('{}  :  from {}, last_wait {}, mode {}'.format(contest,
+            context.bot_data['contest_from'][contest],
+            context.bot_data['contest_last_wait'][contest],
+            context.bot_data['contest_mode'][contest]))
 
 
 def stop_f5_job(chat_id, context):
@@ -205,7 +226,48 @@ def stop_f5_job(chat_id, context):
     context.chat_data.get("f5_job").schedule_removal()
     context.chat_data.pop("f5_job")
     context.bot.send_message(chat_id, text='Stopped job')
-    context.chat_data.get("data", dict()).clear()
+
+def update_contest(contest, context):
+    status = ask_status(contest, from_=context.bot_data['contest_from'][contest])
+    if status is None:
+        return
+    mn = 10**20
+    cnt = 0
+    for value in status.values():
+        for submission in value:
+            mn = min(mn, submission[0])
+        cnt += len(value)
+    if context.bot_data['contest_mode'][contest] == 0:
+        if cnt < 1000:
+            context.bot_data['contest_mode'][contest] = 1
+            context.bot_data['contest_last_wait'][contest] = mn
+        else:
+            context.bot_data['contest_from'][contest] += 10000
+    elif context.bot_data['contest_mode'][contest] == 1:
+        if cnt == 0:
+            context.bot_data['contest_from'][contest] -= 500
+        elif context.bot_data['contest_last_wait'][contest] < mn:
+            context.bot_data['contest_from'][contest] += 1000
+        else:
+            context.bot_data['data'][contest] = status
+            has_pending = False
+            mx = 0
+            for value in status.values():
+                for submission in value:
+                    if (submission[2] == "PRETESTS" and submission[3] == "OK")\
+                                        or submission[3] == "TESTING" or submission[3] == "..." or submission[3] == "?":
+                        has_pending = True
+                        break
+                    mx = max(mx, submission[0])
+                if has_pending:
+                    break
+            if not has_pending:
+                context.bot_data['contest_from'][contest] = max(1, context.bot_data['contest_from'][contest] - 500)
+                context.bot_data['contest_last_wait'][contest] = mx
+    # print('{}  :  from {}, last_wait {}, mode {}'.format(contest,
+    #     context.bot_data['contest_from'][contest],
+    #     context.bot_data['contest_last_wait'][contest],
+    #     context.bot_data['contest_mode'][contest]), flush=True, file=sys.stderr)
 
 def check_updates(context):
     job = context.job
@@ -225,9 +287,7 @@ def check_updates(context):
     for contest in context.bot_data['contest']:
         context.bot_data["data"].setdefault(contest, dict())
         if context.bot_data["last_update"].get(contest, 0) + 1 < time():
-            result = ask_status(contest, only_contestant=context.chat_data.get("only_contestant", False))
-            if result is not None:
-                context.bot_data["data"][contest] = result
+            update_contest(contest, context)
             context.bot_data["last_update"][contest] = time()
         context.chat_data["data"].setdefault(contest, dict())
         for user in context.chat_data["user"]:
@@ -274,8 +334,9 @@ def get_status(update, context):
                     cur_submissions,
                     cur_submissions,
                     context.chat_data.get("short_print", False))
-    if msg != "":
-        context.bot.send_message(update.message.chat_id, text=msg, parse_mode=telegram.ParseMode.MARKDOWN_V2)
+    if msg == "":
+        msg = "No submissions found"
+    context.bot.send_message(update.message.chat_id, text=msg, parse_mode=telegram.ParseMode.MARKDOWN_V2)
 
 
 def start_f5(update, context):
@@ -290,9 +351,9 @@ def start_f5(update, context):
         update.message.reply_text('No contests now, come back later')
         return
 
-    context.chat_data['submissions'] = []
+    context.chat_data['data'] = dict()
     context.chat_data['f5_job_start_time'] = time()
-    context.chat_data["f5_job"] = context.job_queue.run_repeating(check_updates, interval=1, first=0,
+    context.chat_data["f5_job"] = context.job_queue.run_repeating(check_updates, interval=0.5, first=0,
         context=[update.message.chat_id, context])
     update.message.reply_text('Started job with users ({}), contests ({})'.format(
         ', '.join(context.chat_data.get('user')),
