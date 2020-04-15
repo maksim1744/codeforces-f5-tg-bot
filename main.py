@@ -1,5 +1,8 @@
 import os
-TOKEN = os.environ.get("TOKEN", open("token.txt", "r").readline().strip())
+if os.environ.get("TOKEN") is None:
+    TOKEN = open("token.txt", "r").readline().strip()
+else:
+    TOKEN = os.environ["TOKEN"]
 
 from requests import session
 import json
