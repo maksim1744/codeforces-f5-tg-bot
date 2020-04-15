@@ -225,8 +225,9 @@ def check_updates(context):
     for contest in context.bot_data['contest']:
         context.bot_data["data"].setdefault(contest, dict())
         if context.bot_data["last_update"].get(contest, 0) + 1 < time():
-            context.bot_data["data"][contest] = ask_status(contest,
-                    only_contestant=context.chat_data.get("only_contestant", False))
+            result = ask_status(contest, only_contestant=context.chat_data.get("only_contestant", False))
+            if result is not None:
+                context.bot_data["data"][contest] = result
             context.bot_data["last_update"][contest] = time()
         context.chat_data["data"].setdefault(contest, dict())
         for user in context.chat_data["user"]:
