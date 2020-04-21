@@ -43,7 +43,7 @@ class Contest(Thread):
             delay = clock() - start_time
             if delay < 1:
                 sleep(1 - delay)
-            print('from {}, first_untested {}'.format(self.from_, self.first_untested), flush=True)
+            # print('from {}, first_untested {}'.format(self.from_, self.first_untested), flush=True)
 
     def stop(self):
         self.running = False
@@ -144,5 +144,5 @@ class ContestHardRefresher(Thread):
 
     def run(self):
         while self.running:
-            sleep(1)
+            sleep(120)
             self.contest.hard_refresh()
