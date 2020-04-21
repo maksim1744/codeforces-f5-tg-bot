@@ -4,6 +4,9 @@ if os.environ.get("TOKEN") is None:
 else:
     TOKEN = os.environ["TOKEN"]
 
+from contest import Contest
+import submission as sub
+
 from requests import session
 import json
 import logging
@@ -19,98 +22,17 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 logger = logging.getLogger(__name__)
 
-def get_submissions(contestId, user, only_contestant=False):
-    data = session().get(
-        "https://codeforces.com/api/contest.status?handle={}&contestId={}&from=1&count=1000".format(user, contestId))
-    if not data.ok:
-        return None
-    data = json.loads(data.text)
-    if data["status"] != "OK" or data.get("result") is None:
-        return None
-    result = []
-    for item in data["result"]:
-        if item.get("contestId") is None or item.get("author") is None or item.get("problem") is None:
-            continue
-        if only_contestant and item.get("author").get("participantType", "?") != "CONTESTANT":
-            continue
-
-        verdict = item.get("verdict", "?")
-        testset = item.get("testset")
-        if testset == "PRETESTS" and verdict != "OK":
-            continue
-
-        if verdict != '?':
-            if verdict.count('_') >= 1:
-                verdict = ''.join([s[0] for s in verdict.split('_')])
-            else:
-                verdict = verdict[:8]
-
-        passedTestCount = int(item.get("passedTestCount", 0))
-        problemIndex = item.get("problem").get("index", "?")
-
-        result.append([problemIndex, testset, verdict, passedTestCount])
-    return result[::-1]
-
-def print_submissions(submissions, prev=[], short=False):
-    if submissions is None:
-        return ""
-    headings = ["problem", "testset", "verdict", "passed tests"]
-    fmt = "|{: ^9}|{: ^12}|{: ^10}|{: ^14}|"
-    if short:
-        headings = ["№", "testset", "res", "tests"]
-        fmt = "|{: ^3}|{: ^10}|{: ^3}|{: ^5}|"
-    result  = (fmt + "\n").format(*headings)
-    result += (fmt.replace(' ', '-') + "\n").format("", "", "", "")
-    for i, submission in enumerate(submissions):
-        was_submission = submission[:]
-        if short:
-            if submission[2] == "TESTING":
-                submission[2] = "..."
-            else:
-                submission[2] = submission[2][:3]
-        result += fmt.format(*submission)
-        if i >= len(prev) or (i < len(prev) and submissions[i] != prev[i]):
-            result += ' *\n'
-        else:
-            result += '\n'
-        submission = was_submission[:]
-    return '```\n' + result.replace('|', '\\|').replace('-', '\\-').replace('*', '\\*').replace('_', '\\_') + '```'
-
-def ask_status(contest, from_=1, count=1000, only_contestant=False):
-    data = session().get("https://codeforces.com/api/contest.status?contestId={}&from={}&count={}".format(
-        contest, from_, count))
-    if not data.ok:
-        return None
-    data = json.loads(data.text)
-    if data["status"] != "OK" or data.get("result") is None:
-        return None
-    result = dict()
-    for item in data["result"]:
-        if item.get("contestId") is None or item.get("author") is None or item.get("problem") is None:
-            continue
-        if only_contestant and item.get("author").get("participantType", "?") != "CONTESTANT":
-            continue
-
-        author = item.get("author").get("members")[0]["handle"].lower()
-        verdict = item.get("verdict", "?")
-        testset = item.get("testset")
-
-        if verdict != '?':
-            if verdict.count('_') >= 1:
-                verdict = ''.join([s[0] for s in verdict.split('_')])
-            else:
-                verdict = verdict[:8]
-
-        passedTestCount = int(item.get("passedTestCount", 0))
-        problemIndex = item.get("problem").get("index", "?")
-
-        submission_id = int(item.get("id", 0))
-
-        if result.get(author) is None:
-            result[author] = []
-        result[author].append([submission_id, problemIndex, testset, verdict, passedTestCount])
-    return result
-
+def print_submissions(new_submissions, prev_submissions=[], short_print=False):
+    msg = ""
+    msg += '```\n'
+    msg += sub.get_titles(short=short_print)
+    for submission in new_submissions:
+        msg += sub.to_string(submission, short=short_print)
+        if submission not in prev_submissions:
+            msg += ' *'
+        msg += '\n'
+    msg += '```\n'
+    return msg
 
 def start(update, context):
     update.message.reply_text('Hi! Use /help to see help')
@@ -135,13 +57,12 @@ def ask_user(update, context):
     update.message.reply_text('Current users: ' + msg)
 
 def add_user(update, context):
+    context.chat_data.setdefault('user', set())
     for user in context.args:
         if not re.fullmatch(r'[a-zA-Z0-9_-]+', user):
             update.message.reply_text('Don\'t user strange symbols')
             return
         user = user.lower()
-        if context.chat_data.get('user') is None:
-            context.chat_data['user'] = set()
         context.chat_data['user'].add(user)
     ask_user(update, context)
 
@@ -154,12 +75,12 @@ def del_user(update, context):
             context.chat_data['user'].remove(user)
         for contest in context.chat_data.get("data", dict()):
             if user in context.chat_data['data'][contest]:
-                context.chat_data['data'][contest].pop(user)
+                context.chat_data['data'][contest].remove(user)
     ask_user(update, context)
 
 
 def ask_contest(update, context):
-    msg = ', '.join(str(contest) for contest in context.bot_data.get('contest', []))
+    msg = ', '.join(str(contest) for contest in context.bot_data.get('contest', dict()).keys())
     update.message.reply_text('Current contests: ' + msg)
 
 def add_contest(update, context):
@@ -167,20 +88,15 @@ def add_contest(update, context):
         update.message.reply_text('This option is not available for you')
         return
 
-    context.bot_data.setdefault('contest', set())
-    context.bot_data.setdefault('contest_mode', dict())
-    context.bot_data.setdefault('contest_from', dict())
-    context.bot_data.setdefault('contest_last_wait', dict())
+    context.bot_data.setdefault('contest', dict())
 
     for contest in context.args:
         if not re.fullmatch(r'[0-9]+', contest):
             update.message.reply_text('Contest must be an integer')
             break
-        if contest not in context.bot_data['contest']:
-            context.bot_data['contest_mode'][contest] = 0
-            context.bot_data['contest_from'][contest] = 1
-            context.bot_data['contest_last_wait'][contest] = 0
-            context.bot_data['contest'].add(contest)
+        if contest in context.bot_data['contest']:
+            continue
+        context.bot_data['contest'][contest] = Contest(contest)
     ask_contest(update, context)
 
 def del_contest(update, context):
@@ -193,17 +109,9 @@ def del_contest(update, context):
         return
     for contest in context.args:
         if contest in context.bot_data['contest']:
-            context.bot_data['contest'].remove(contest)
-        if contest in context.bot_data.get('last_update', dict()):
-            context.bot_data['last_update'].pop(contest)
-        if contest in context.bot_data.get('data', dict()):
-            context.bot_data['data'].pop(contest)
-        if contest in context.bot_data.get('contest_mode', dict()):
-            context.bot_data['data'].pop(contest)
-        if contest in context.bot_data.get('contest_from', dict()):
-            context.bot_data['data'].pop(contest)
-        if contest in context.bot_data.get('contest_last_wait', dict()):
-            context.bot_data['data'].pop(contest)
+            if context.bot_data['contest'][contest].isAlive():
+                context.bot_data['contest'][contest].stop()
+            context.bot_data['contest'].pop(contest)
     ask_contest(update, context)
 
 
@@ -212,11 +120,6 @@ def error(update, context):
     logger.warning('contests: ({}), users: ({})'.format(
         ', '.join(contest for contest in context.bot_data.get('contest', set())),
         ', '.join(user for user in context.chat_data.get('user', set()))))
-    for contest in context.bot_data.get('contest', set()):
-        logger.warning('{}  :  from {}, last_wait {}, mode {}'.format(contest,
-            context.bot_data['contest_from'][contest],
-            context.bot_data['contest_last_wait'][contest],
-            context.bot_data['contest_mode'][contest]))
 
 
 def stop_f5_job(chat_id, context):
@@ -227,92 +130,32 @@ def stop_f5_job(chat_id, context):
     context.chat_data.pop("f5_job")
     context.bot.send_message(chat_id, text='Stopped job')
 
-def update_contest(contest, context):
-    status = ask_status(contest, from_=context.bot_data['contest_from'][contest])
-    if status is None:
-        return
-    mn = 10**20
-    cnt = 0
-    for value in status.values():
-        for submission in value:
-            mn = min(mn, submission[0])
-        cnt += len(value)
-    if context.bot_data['contest_mode'][contest] == 0:
-        if cnt < 1000:
-            context.bot_data['contest_mode'][contest] = 1
-            context.bot_data['contest_last_wait'][contest] = mn
-        else:
-            context.bot_data['contest_from'][contest] += 10000
-    elif context.bot_data['contest_mode'][contest] == 1:
-        if cnt == 0:
-            context.bot_data['contest_from'][contest] -= 500
-        elif context.bot_data['contest_last_wait'][contest] < mn:
-            context.bot_data['contest_from'][contest] += 1000
-        else:
-            context.bot_data['data'][contest] = status
-            has_pending = False
-            mx = 0
-            for value in status.values():
-                for submission in value:
-                    if (submission[2] == "PRETESTS" and submission[3] == "OK")\
-                                        or submission[3] == "TESTING" or submission[3] == "..." or submission[3] == "?":
-                        has_pending = True
-                        break
-                    mx = max(mx, submission[0])
-                if has_pending:
-                    break
-            if not has_pending:
-                context.bot_data['contest_from'][contest] = max(1, context.bot_data['contest_from'][contest] - 500)
-                context.bot_data['contest_last_wait'][contest] = mx
-    # print('{}  :  from {}, last_wait {}, mode {}'.format(contest,
-    #     context.bot_data['contest_from'][contest],
-    #     context.bot_data['contest_last_wait'][contest],
-    #     context.bot_data['contest_mode'][contest]), flush=True, file=sys.stderr)
-
 def check_updates(context):
     job = context.job
     context = job.context[1]
     chat_id = job.context[0]
 
-    if context.chat_data["f5_job_start_time"] + 86400 < time() or context.bot_data.get("contest", set()) == set() or \
+    if context.chat_data["f5_job_start_time"] + 86400 < time() or context.bot_data.get("contest", dict()) == dict() or \
         context.chat_data.get("user", set()) == set():
         stop_f5_job(chat_id, context)
 
-    context.bot_data.setdefault("last_update", dict())
-    context.bot_data.setdefault("data", dict())
     context.chat_data.setdefault("data", dict())
 
     msg = ""
 
-    for contest in context.bot_data['contest']:
-        context.bot_data["data"].setdefault(contest, dict())
-        if context.bot_data["last_update"].get(contest, 0) + 1 < time():
-            update_contest(contest, context)
-            context.bot_data["last_update"][contest] = time()
-        context.chat_data["data"].setdefault(contest, dict())
+    short_print = context.chat_data.get("short_print", False)
+
+    for contest in context.bot_data['contest'].values():
+        context.chat_data["data"].setdefault(contest.ID, dict())
         for user in context.chat_data["user"]:
-            context.chat_data["data"][contest].setdefault(user, dict())
-            user_changed = False
-            prev_submissions = []
-            try:
-                prev_submissions = [context.chat_data["data"][contest][user][key] for key in \
-                             sorted(context.chat_data["data"][contest][user].keys())]
-            except:
-                print(context.chat_data["data"], flush=True)
-            for submission in context.bot_data["data"][contest].get(user, []):
-                if context.chat_data["data"][contest][user].get(submission[0], []) != submission[1:]:
-                    context.chat_data["data"][contest][user][submission[0]] = submission[1:]
-                    user_changed = True
-            if user_changed:
-                if msg != "":
-                    msg += "\n"
-                msg += "Contest {}, user {}\n".format(contest, user)
-                cur_submissions = [context.chat_data["data"][contest][user][key] for key in \
-                            sorted(context.chat_data["data"][contest][user].keys())]
-                msg += print_submissions(
-                    cur_submissions,
-                    prev_submissions,
-                    context.chat_data.get("short_print", False))
+            prev_submissions = context.chat_data["data"][contest.ID].get(user, list())[:]
+            new_submissions = contest.get_submissions(user)
+            if prev_submissions == new_submissions:
+                continue
+            msg += "user {}, contest {}\n".format(user, contest.ID)
+            msg += print_submissions(new_submissions, prev_submissions, short_print)
+            msg += "\n"
+            context.chat_data["data"][contest.ID][user] = new_submissions
     if msg != "":
         context.bot.send_message(chat_id, text=msg, parse_mode=telegram.ParseMode.MARKDOWN_V2)
 
@@ -321,19 +164,19 @@ def get_status(update, context):
     if context.chat_data.get("f5_job") is None:
         update.message.reply_text('Start job with /start_f5')
         return
-    msg = ''
-    for contest in context.bot_data.get("contest", set()):
-        for user in context.chat_data.get("user", set()):
-            cur_submissions = [context.chat_data["data"][contest][user][key] for key in \
-                        sorted(context.chat_data["data"][contest].get(user, dict()).keys())]
-            if len(cur_submissions) > 0:
-                if msg != "":
-                    msg += "\n"
-                msg += "Contest {}, user {}\n".format(contest, user)
-                msg += print_submissions(
-                    cur_submissions,
-                    cur_submissions,
-                    context.chat_data.get("short_print", False))
+
+    msg = ""
+
+    short_print = context.chat_data.get("short_print", False)
+
+    for contest in context.bot_data['contest'].values():
+        context.chat_data["data"].setdefault(contest.ID, dict())
+        for user in context.chat_data["user"]:
+            submissions = context.chat_data["data"][contest.ID].get(user, list())[:]
+            msg += "user {}, contest {}\n".format(user, contest.ID)
+            msg += print_submissions(submissions, submissions, short_print)
+            msg += "\n"
+
     if msg == "":
         msg = "No submissions found"
     context.bot.send_message(update.message.chat_id, text=msg, parse_mode=telegram.ParseMode.MARKDOWN_V2)
