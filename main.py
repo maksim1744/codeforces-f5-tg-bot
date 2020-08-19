@@ -117,9 +117,15 @@ def del_contest(update, context):
 
 def error(update, context):
     logger.warning('Update "%s" caused error "%s"', update, context.error)
+    users = []
+    if context.chat_data is not None:
+        users = [user for user in context.chat_data.get('user', set())]
+    contests = []
+    if context.bot_data is not None:
+        contests = [contest for contest in context.bot_data.get('contest', set())]
     logger.warning('contests: ({}), users: ({})'.format(
-        ', '.join(contest for contest in context.bot_data.get('contest', set())),
-        ', '.join(user for user in context.chat_data.get('user', set()))))
+        ', '.join(contests),
+        ', '.join(users)))
 
 
 def stop_f5_job(chat_id, context):

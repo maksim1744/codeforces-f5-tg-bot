@@ -29,6 +29,8 @@ class Contest(Thread):
         self.running = True
         self.need_reset = False
         self.hard_refresher = ContestHardRefresher(self)
+        self.hard_sum_time = 0
+        self.hard_cnt_time = 0
         self.reset()
         self.start()
 
@@ -51,6 +53,7 @@ class Contest(Thread):
     def hard_refresh(self):
         while Contest.DOING_HARD_RESET:
             sleep(5)
+        t = clock()
         Contest.DOING_HARD_RESET = True
         # do something so no more that 1 contest is in MODE_INIT
         data = requests.get("https://codeforces.com/api/contest.status?contestId={}&from=1&count=1000000000".format(self.ID))
@@ -74,6 +77,13 @@ class Contest(Thread):
             self.mode = Contest.MODE_GOING_BACK
             self.from_ = max(1, len(data["result"]) - Contest.PAGE_SIZE // 2)
         # print('hard refresh done', flush=True)
+        self.hard_sum_time += clock() - t
+        self.hard_cnt_time += 1
+        if self.hard_cnt_time % 10 == 0:
+            print("average time on HARD REFRESH from {} queries: {}".format(self.hard_cnt_time, self.hard_sum_time / self.hard_cnt_time),
+                flush=True)
+            self.hard_cnt_time = 0
+            self.hard_sum_time = 0
         Contest.DOING_HARD_RESET = False
         return True
 
@@ -144,5 +154,4 @@ class ContestHardRefresher(Thread):
 
     def run(self):
         while self.running:
-            sleep(120)
             self.contest.hard_refresh()
