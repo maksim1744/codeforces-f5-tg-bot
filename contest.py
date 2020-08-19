@@ -48,6 +48,8 @@ class Contest(Thread):
             # print('from {}, first_untested {}'.format(self.from_, self.first_untested), flush=True)
 
     def stop(self):
+        if self.hard_refresher.isAlive():
+            self.hard_refresher.stop()
         self.running = False
 
     def hard_refresh(self):

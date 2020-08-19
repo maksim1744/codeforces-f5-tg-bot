@@ -75,7 +75,7 @@ def del_user(update, context):
             context.chat_data['user'].remove(user)
         for contest in context.chat_data.get("data", dict()):
             if user in context.chat_data['data'][contest]:
-                context.chat_data['data'][contest].remove(user)
+                context.chat_data['data'][contest].pop(user)
     ask_user(update, context)
 
 
